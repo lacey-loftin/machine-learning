@@ -1,0 +1,166 @@
+---
+title: 'Machine Learning: Prediction Assignment'
+author: "Lacey Glencora Loftin"
+date: "6/15/2017"
+output: html_document
+---
+##Project Overview:
+
+####Objective: 
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+####Background: 
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+####Data Sources: 
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Loading the Packages and Data:
+```{r results="hide", message=FALSE, warning=FALSE}
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+```
+Loading the data
+```{r}
+# The Training Data:
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+# The Testing Data:
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+# Download the training data 
+if (!file.exists("train_data.csv")){
+  download.file(train_url, destfile="train_data.csv", method="curl")
+}
+# Download the testing data
+if (!file.exists("test_data.csv")){
+download.file(test_url, destfile="test_data.csv", method="curl")
+}
+# Read the Training CSV file into R and replace missing values and excel error strings #DIV/0! with 'NA'
+train_data <- read.csv("train_data.csv", na.strings=c("NA","#DIV/0!",""), header=TRUE)
+
+# Read the Testing CSV file into R and replace missing values and excel error strings #DIV/0! with 'NA'
+test_data <- read.csv("test_data.csv", na.strings=c("NA","#DIV/0!",""), header=TRUE)
+
+# Take a look at the Training data
+summary(train_data$classe)
+```
+
+List of the classe variable which contains 5 different ways barbell lifts were performed correctly and incorrectly:
+
+- Class A: exactly according to the specification
+- Class B: throwing the elbows to the front
+- Class C: lifting the dumbbell only halfway
+- Class D: lowering the dumbbell only halfway
+- Class E: throwing the hips to the front
+
+##Seperating the Data for Cross-Validation: 
+The training data is now split into a training and testing set. The data is seperated by the classe variable, which is the varible we will be predicting later. The data is split into 60% for training and 40% for testing.
+```{r}
+inTrain <- createDataPartition(y=train_data$classe, p = 0.60, list=FALSE)
+training <- train_data[inTrain,]
+testing <- train_data[-inTrain,]
+dim(training); dim(testing)
+```
+
+##Processing the Data: 
+```{r}
+training <- training[,-c(1:7)]
+# Remove NearZeroVariance variables
+nzv <- nearZeroVar(training, saveMetrics=TRUE)
+training <- training[, nzv$nzv==FALSE]
+# There are a lot of variables where most of the values are ‘NA’ and drop variables that have 60% or more of the values as ‘NA’
+training_clean <- training
+for(i in 1:length(training)) {
+  if( sum( is.na( training[, i] ) ) /nrow(training) >= .6) {
+    for(j in 1:length(training_clean)) {
+      if( length( grep(names(training[i]), names(training_clean)[j]) ) == 1)  {
+        training_clean <- training_clean[ , -j]
+      }   
+    } 
+  }
+}
+
+# Set the new cleaned up dataset back to the old dataset name
+training <- training_clean
+
+# Transforming the Test_data
+
+# Get the column names in the training dataset
+columns <- colnames(training)
+# Drop the class variable
+columns2 <- colnames(training[, -53])
+# Subset the test data on the variables that are in the training data set
+test_data <- test_data[columns2]
+dim(test_data)
+```
+
+##Cross Validation: Random Forest 
+```{r}
+set.seed(12345)
+modFit <- randomForest(classe ~ ., data=training)
+prediction <- predict(modFit, testing)
+cm <- confusionMatrix(prediction, testing$classe)
+print(cm)
+```
+```{r}
+overall.accuracy <- round(cm$overall['Accuracy'] * 100, 2)
+sam.err <- round(1 - cm$overall['Accuracy'],2)
+overall.accuracy
+sam.err
+```
+This model is 99% accurate on the testing data seperated from the training data and the out of sample error is 0.01%. 
+```{r}
+plot(modFit)
+```
+
+##Cross Validation: Decision Tree
+```{r}
+set.seed(54321)
+modFit2 <- rpart(classe ~ ., data=training, method="class")
+prediction2 <- predict(modFit2, testing, type="class")
+cm2 <- confusionMatrix(prediction2, testing$classe)
+print(cm2)
+```
+
+```{r}
+overall.accuracy2 <- round(cm2$overall['Accuracy'] * 100, 2)
+sam.err2 <- round(1 - cm2$overall['Accuracy'],2)
+overall.accuracy2
+sam.err2
+```
+This model is 71.92% accurate on the testing data partitioned from the training data and the out of sample error is 0.28%.
+```{r}
+fancyRpartPlot(modFit2, main="Decision Tree")
+```
+
+##The Winning Model: 
+Since the Random Forest model is significantly more accurate than the Decision Tree, I will use the Random Forest model to predict.
+
+##Conclusion and Prediction:
+```{r}
+final_prediction <- predict(modFit, test_data, type="class")
+print(final_prediction)
+```
+ 
+```{r}
+table(final_prediction)
+```
+
+The model predicted that most participants will fall into the A, preform the exercise exactly according to the specification, or B group in which the group will throw thir elbows to the front.  
+
+
